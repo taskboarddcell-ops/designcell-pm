@@ -2196,40 +2196,72 @@ export default function ProjectManagerClient() {
     userCancel.addEventListener('click', () => hideModal(userModal));
 
   userOK &&
-    userOK.addEventListener('click', async () => {
-      if (!uName || !uLevel || !uEmail) return;
+  userOK.addEventListener('click', async () => {
+    if (!uName || !uLevel || !uEmail) return;
 
-      const name = uName.value.trim();
-      const email = uEmail.value.trim();
-      const level = uLevel.value || 'Designer';
+    const name = uName.value.trim();
+    const email = uEmail.value.trim();
+    const level = uLevel.value || 'Designer';
 
-      if (!name || !email) {
-        toast('Name and email are required');
-        return;
+    if (!name || !email) {
+      toast('Name and email are required');
+      return;
+    }
+
+    // ------------------ GENERATE DC-ID ------------------
+    const { data: nextId, error: idErr } = await supabase.rpc('get_next_dc_id');
+    if (idErr || !nextId) {
+      console.error('get_next_dc_id error:', idErr);
+      toast('Failed to generate user ID');
+      return;
+    }
+    const staffId = nextId as string;   // Example: DC07
+    // ---------------------------------------------------
+
+    const passcode = String(Math.floor(1000 + Math.random() * 9000));
+
+    const { error } = await supabase.from('users').insert([
+      {
+        staff_id: staffId,
+        name,
+        email,
+        access_level: level,
+        passcode,
+      },
+    ]);
+
+    if (error) {
+      console.error('Create user error', error);
+      toast('Failed to create user');
+      return;
+    }
+
+    // ---------- CALL EDGE FUNCTION TO SEND EMAIL ----------
+    try {
+      const { data: fnData, error: fnError } =
+        await supabase.functions.invoke('send-user-invite', {
+          body: {
+            name,
+            email,
+            staff_id: staffId,
+            passcode,
+          },
+        });
+
+      console.log('send-user-invite result', { fnData, fnError });
+
+      if (fnError) {
+        console.error('send-user-invite error:', fnError);
+        // Don’t block on email failure
       }
+    } catch (fnErr) {
+      console.error('send-user-invite exception:', fnErr);
+      // Optional: toast('User created, but failed to send email');
+    }
 
-      const staffId = `S${Date.now()}`;
-      const passcode = String(Math.floor(1000 + Math.random() * 9000));
-
-      const { error } = await supabase.from('users').insert([
-        {
-          staff_id: staffId,
-          name,
-          email,
-          access_level: level,
-          passcode,
-        },
-      ]);
-
-      if (error) {
-        console.error('Create user error', error);
-        toast('Failed to create user');
-        return;
-      }
-
-      hideModal(userModal);
-      toast(`User created. StaffID: ${staffId}, PIN: ${passcode}`);
-    });
+    hideModal(userModal);
+    toast(`User created. StaffID: ${staffId}, PIN: ${passcode}`);
+  });
 
   // ---------- STATUS / RESCHEDULE / COMPLETE / HISTORY ----------
   const resModal = el('resModal');
